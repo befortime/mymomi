@@ -13,7 +13,8 @@ else:
 
 import pyVmomi
 from pyVim import connect
-from pyVmomi import vim
+from pyVmomi import vim, pbm
+from pyVim.task import WaitForTask
 
 import vsanmgmtObjects
 
@@ -21,7 +22,7 @@ import vsanapiutils
 
 log_level = 5
 
-vcIp = '10.160.251.57'
+vcIp = '10.160.173.97'
 vcUser = 'administrator@vsphere.local'
 vcPass = 'Admin!23'
 
@@ -80,3 +81,34 @@ if __name__ == '__main__':
     vccs = vsanVcMos['vsan-cluster-config-system']
     clusterConfig = vccs.GetConfigInfoEx(cluster)
     Info(clusterConfig.iscsiConfig.enabled)
+
+    pbmSi, pbmContent = vsanapiutils.GetPbmConnection(si._stub, context=context)
+
+    pm = pbmContent.profileManager
+    profileIds = pm.PbmQueryProfile(
+        resourceType=pbm.profile.ResourceType(resourceType="STORAGE"),
+        profileCategory="REQUIREMENT"
+    )
+
+    profiles = []
+    if len(profileIds) > 0:
+        profiles = pm.PbmRetrieveContent(profileIds=profileIds)
+
+    # Attempt to find profile name given by user
+    for profile in profiles:
+        if profile.name == 'vSAN Default Storage Policy':
+            vitProfile = profile
+            break
+
+    policyId = vitProfile.profileId.uniqueId
+    policySpec = vim.VirtualMachineDefinedProfileSpec(profileId=policyId)
+
+    serviceSpec = vim.cluster.VsanIscsiTargetServiceSpec(defaultConfig = vim.cluster.VsanIscsiTargetServiceDefaultConfigSpec(
+                                        networkInterface = "vmk0"),
+                                        homeObjectStoragePolicy = policySpec,
+                                        enabled = True)
+
+    task = vccs.ReconfigureEx(cluster, vim.vsan.ReconfigSpec(iscsiSpec = serviceSpec))
+
+    task = vim.task(task._moId, cluster._stub)
+    WaitForTask(task)

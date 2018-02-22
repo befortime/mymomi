@@ -10,13 +10,20 @@ __author__ = 'VMware, Inc'
 
 import sys
 import ssl
-if (sys.version_info[0] == 3):
+PY3 = sys.version_info[0] == 3
+if PY3:
    from urllib.request import urlopen
 else:
    from urllib2 import urlopen
 from xml.dom import minidom
 
-from pyVmomi import vim, vmodl, SoapStubAdapter, VmomiSupport
+if PY3:
+    from http import cookies as Cookie
+else:
+    import Cookie
+
+from pyVmomi import vim, pbm, vmodl, SoapStubAdapter, VmomiSupport
+import pyVmomi
 # Import the vSAN API python bindings
 import vsanmgmtObjects
 
@@ -42,6 +49,26 @@ def _GetVsanStub(
    )
    vsanStub.cookie = stub.cookie
    return vsanStub
+
+def GetPbmConnection(stub, context=None):
+    sessionCookie = stub.cookie.split('"')[1]
+    httpContext = VmomiSupport.GetHttpContext()
+    cookie = Cookie.SimpleCookie()
+    cookie["vmware_soap_session"] = sessionCookie
+    httpContext["cookies"] = cookie
+    VmomiSupport.GetRequestContext()["vcSessionCookie"] = sessionCookie
+    hostname = stub.host.split(":")[0]
+
+    pbmStub = pyVmomi.SoapStubAdapter(
+        host=hostname,
+        version="pbm.version.version1",
+        path="/pbm/sdk",
+        poolSize=0,
+        sslContext=context)
+    pbmSi = pbm.ServiceInstance("ServiceInstance", pbmStub)
+    pbmContent = pbmSi.RetrieveContent()
+
+    return (pbmSi, pbmContent)
 
 # Construct a stub for access vCenter side vSAN APIs.
 def GetVsanVcStub(stub, context=None, version=VSAN_VMODL_VERSION):
